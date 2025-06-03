@@ -540,9 +540,10 @@ export function KnowledgeGraph() {
                                     </TableRow>
                                 </TableHeader>{" "}
                                 <TableBody>
-                                    {connections.map((conn, index) => (                                        <TableRow
+                                    {connections.map((conn, index) => (
+                                        <TableRow
                                             key={index}
-                                            className="hover:bg-slate-50 transition-colors cursor-pointer"
+                                            className="transition-colors cursor-pointer"
                                         >
                                             <TableCell className="py-3">
                                                 <div className="flex items-center gap-2">
@@ -610,9 +611,10 @@ export function KnowledgeGraph() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {connections.map((connection, idx) => (                                        <TableRow
+                                    {connections.map((connection, idx) => (
+                                        <TableRow
                                             key={idx}
-                                            className="hover:bg-slate-50 transition-colors"
+                                            className="transition-colors"
                                         >
                                             <TableCell className="font-medium">
                                                 <div className="flex items-center gap-2">
