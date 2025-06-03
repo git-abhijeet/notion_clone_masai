@@ -1,0 +1,105 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { NextRequest, NextResponse } from "next/server";
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
+// Common patterns for faster responses
+const commonCompletions: Record<string, string> = {
+  "the capital of india is": "New Delhi",
+  "the capital of usa is": "Washington D.C.",
+  "the capital of united states is": "Washington D.C.",
+  "the capital of uk is": "London",
+  "the capital of united kingdom is": "London",
+  "the capital of japan is": "Tokyo",
+  "the capital of china is": "Beijing", 
+  "the capital of australia is": "Canberra",
+  "the capital of france is": "Paris",
+  "the capital of germany is": "Berlin",
+};
+
+export async function POST(req: NextRequest) {
+  try {
+    const { text, cursorPosition } = await req.json();
+
+    if (!text || text.trim().length === 0) {
+      return NextResponse.json({ completion: "" });
+    }
+
+    // Get the text before cursor for context
+    const contextText = text.substring(0, cursorPosition);
+    const words = contextText.trim().split(/\s+/);
+    
+    // Only suggest if we have at least 2 words for context
+    if (words.length < 2) {
+      return NextResponse.json({ completion: "" });
+    }
+
+    // Get the last few words for better context
+    const lastWords = words.slice(-10).join(" ");
+    const lastWordsLower = lastWords.toLowerCase();
+    
+    // Check for common patterns first (case insensitive)
+    for (const [pattern, response] of Object.entries(commonCompletions)) {
+      if (lastWordsLower.includes(pattern)) {
+        let hardcodedCompletion = response;
+        
+        // Make sure completion starts with a space if needed
+        if (hardcodedCompletion && !contextText.endsWith(" ") && !hardcodedCompletion.startsWith(" ")) {
+          hardcodedCompletion = " " + hardcodedCompletion;
+        }
+        
+        console.log("Found hardcoded match:", pattern, "→", hardcodedCompletion);
+        return NextResponse.json({ completion: hardcodedCompletion });
+      }
+    }
+
+    // Use the Gemini 2.0 Flash model for completions
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    
+    const prompt = `You are an AI writing assistant. Complete the following text naturally and contextually. 
+    
+Text to complete: "${lastWords}"
+
+Rules:
+1. Provide a SHORT completion (1-5 words maximum)
+2. Make it contextually relevant and natural
+3. Don't repeat the existing text
+4. If the text seems complete or unclear, return empty string
+5. Focus on common completions that make sense
+6. For questions about capitals (e.g. "the capital of X is"), answer with the capital city name
+7. For common knowledge questions, provide the correct answer
+
+Examples:
+- "the capital of France is" → "Paris"
+- "the capital of India is" → "New Delhi"
+- "JavaScript is a programming" → "language"
+
+Only return the completion text, nothing else:`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    let aiCompletion = response.text().trim();
+
+    // Clean up the completion
+    aiCompletion = aiCompletion.replace(/"/g, "").trim();
+    
+    // Don't suggest if completion is too long or exactly matches the original text
+    if (aiCompletion.length > 50 || aiCompletion.toLowerCase() === lastWordsLower) {
+      aiCompletion = "";
+    }
+    
+    // Debug logging for development
+    console.log("Context:", lastWords);
+    console.log("Generated completion:", aiCompletion);
+
+    // Make sure completion starts with a space if needed
+    if (aiCompletion && !contextText.endsWith(" ") && !aiCompletion.startsWith(" ")) {
+      aiCompletion = " " + aiCompletion;
+    }
+
+    return NextResponse.json({ completion: aiCompletion });
+  } catch (error) {
+    console.error("Text completion error:", error);
+    return NextResponse.json({ completion: "" });
+  }
+}
