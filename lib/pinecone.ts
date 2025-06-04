@@ -12,8 +12,7 @@ export const getPineconeClient = async (): Promise<Pinecone> => {
     return pinecone;
 };
 
-export const PINECONE_INDEX_NAME =
-    process.env.PINECONE_INDEX_NAME || "notion-clone";
+export const PINECONE_INDEX_NAME = process.env.PINECONE_INDEX || "notion-clone";
 
 export interface DocumentMetadata {
     documentId: string;

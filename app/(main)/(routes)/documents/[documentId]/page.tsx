@@ -9,9 +9,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useCallback, useRef } from "react";
 import { useAutoTagger } from "@/hooks/use-auto-tagger";
-// import { useDocumentIndexing } from "@/hooks/use-document-indexing";
 import { Badge } from "@/components/ui/badge";
-import { debounce } from "lodash";
 
 interface DocumentsIdPageProps {
     params: {
@@ -31,32 +29,9 @@ function DocumentsIdPage({ params }: DocumentsIdPageProps) {
 
     const update = useMutation(api.documents.updateDocument);
     const { generateTags, isLoading: isGeneratingTags } = useAutoTagger();
-    // const { indexDocument } = useDocumentIndexing();
-
-    // Debounced indexing function to avoid too many API calls
-    // const debouncedIndexDocument = useMemo(
-    //   () => debounce(async (docId: string, title: string, content: string) => {
-    //     try {
-    //       await indexDocument({
-    //         documentId: docId,
-    //         title,
-    //         content,
-    //       });
-    //       console.log('Document indexed successfully');
-    //     } catch (error) {
-    //       console.error('Failed to index document:', error);
-    //     }
-    //   }, 2000), // 2 second delay
-    //   [indexDocument]
-    // );
 
     const onChange = (content: string) => {
         update({ id: params.documentId, content });
-
-        // Automatically index the document with the updated content
-        // if (document?.title && content) {
-        //   debouncedIndexDocument(params.documentId, document.title, content);
-        // }
     };
 
     const handleGenerateTags = async () => {

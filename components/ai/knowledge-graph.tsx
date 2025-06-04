@@ -736,7 +736,7 @@ export function KnowledgeGraph() {
                     <div className="flex items-center gap-2">
                         <div className="w-2 h-2 bg-green-500 rounded-full" />
                         <span>Use controls to zoom and pan the view</span>
-                    </div>
+                    </div>{" "}
                     <div className="flex items-center gap-2">
                         <div className="w-2 h-2 bg-gray-500 rounded-full" />
                         <span>View minimap for navigation in large graphs</span>

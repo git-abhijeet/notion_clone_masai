@@ -92,12 +92,68 @@ export async function POST(req: NextRequest) {
                                 : "Unknown error",
                     });
                 }
-
             case "deleted":
+                console.log(
+                    "🗑️ [WEBHOOK DELETE] Starting document deletion process:",
+                    {
+                        documentId: document._id,
+                        documentTitle: document.title,
+                        timestamp: new Date().toISOString(),
+                    }
+                );
+
                 try {
+                    // Log index stats before deletion
+                    const statsBefore = await index.describeIndexStats();
+                    console.log(
+                        "📊 [PINECONE STATS] Index stats before deletion:",
+                        {
+                            totalVectors: statsBefore.totalRecordCount || 0,
+                            documentIdToDelete: document._id,
+                        }
+                    );
+
                     // Remove from Pinecone
+                    console.log(
+                        "🗑️ [PINECONE DELETE] Attempting to delete vector with ID:",
+                        document._id
+                    );
                     await index.deleteOne(document._id);
 
+                    // Verify deletion by trying to fetch the deleted document
+                    try {
+                        const fetchResult = await index.fetch([document._id]);
+                        console.log(
+                            "🔍 [PINECONE VERIFY] Post-deletion fetch result:",
+                            {
+                                documentId: document._id,
+                                vectorExists:
+                                    !!fetchResult.records[document._id],
+                                fetchKeys: Object.keys(fetchResult.records),
+                            }
+                        );
+                    } catch (fetchError) {
+                        console.log(
+                            "🔍 [PINECONE VERIFY] Could not fetch deleted document (expected):",
+                            fetchError
+                        );
+                    }
+
+                    // Log index stats after deletion
+                    const statsAfter = await index.describeIndexStats();
+                    console.log(
+                        "📊 [PINECONE STATS] Index stats after deletion:",
+                        {
+                            totalVectors: statsAfter.totalRecordCount || 0,
+                            vectorsRemoved:
+                                (statsBefore.totalRecordCount || 0) -
+                                (statsAfter.totalRecordCount || 0),
+                        }
+                    );
+
+                    console.log(
+                        "✅ [WEBHOOK DELETE] Document deletion completed successfully"
+                    );
                     return NextResponse.json({
                         success: true,
                         message: "Document deleted and removed from index",
@@ -105,7 +161,7 @@ export async function POST(req: NextRequest) {
                     });
                 } catch (error) {
                     console.error(
-                        `Error removing document ${document._id} from index:`,
+                        `❌ [WEBHOOK DELETE ERROR] Error removing document ${document._id} from index:`,
                         error
                     );
                     return NextResponse.json({

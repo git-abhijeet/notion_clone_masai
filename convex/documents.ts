@@ -1,6 +1,7 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, action } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
+import { api } from "./_generated/api";
 
 // Function to validate the user's identity
 const validateUser = async (ctx: any): Promise<string> => {
@@ -79,9 +80,30 @@ export const archiveDocument = mutation({
     args: { id: v.id("documents") }, // Document ID to archive
     handler: async (ctx, args) => {
         const userId = await validateUser(ctx); // Validate the user
-        await fetchDocument(ctx, args.id, userId); // Fetch and validate the document
+        const document = await fetchDocument(ctx, args.id, userId); // Fetch and validate the document
+
+        console.log("📁 [ARCHIVE] Starting document archival process:", {
+            documentId: args.id,
+            title: document.title,
+            timestamp: new Date().toISOString(),
+        });
+
         await ctx.db.patch(args.id, { isArchived: true }); // Archive the document
         await recursiveOperation(ctx, args.id, userId, true); // Recursively archive children
+
+        // Remove archived document from Pinecone index (archived docs shouldn't appear in search)
+        console.log(
+            "📁 [ARCHIVE] Scheduling Pinecone cleanup for archived document:",
+            args.id
+        );
+        await ctx.scheduler.runAfter(0, api.documents.cleanupPineconeIndex, {
+            documentId: args.id,
+            title: document.title,
+            content: document.content,
+            userId: document.userId,
+        });
+
+        console.log("✅ [ARCHIVE] Document archival completed:", args.id);
     },
 });
 
@@ -113,6 +135,165 @@ export const restoreDocument = mutation({
 
         await ctx.db.patch(args.id, options); // Restore the document
         await recursiveOperation(ctx, args.id, userId, false); // Recursively restore children
+
+        // Re-index restored document if it has content
+        if (document.content) {
+            await ctx.scheduler.runAfter(0, api.documents.reindexDocument, {
+                documentId: args.id,
+                title: document.title,
+                content: document.content,
+                userId: document.userId,
+            });
+        }
+    },
+});
+
+// Action to re-index document in Pinecone after restoration
+export const reindexDocument = action({
+    args: {
+        documentId: v.string(),
+        title: v.string(),
+        content: v.string(),
+        userId: v.string(),
+    },
+    handler: async (ctx, args) => {
+        try {
+            // Get the base URL for the webhook
+            const baseUrl =
+                process.env.WEBHOOK_BASE_URL || "http://localhost:3001";
+
+            const response = await fetch(`${baseUrl}/api/webhooks/document`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "updated",
+                    document: {
+                        _id: args.documentId,
+                        title: args.title,
+                        content: args.content,
+                        userId: args.userId,
+                    },
+                }),
+            });
+
+            if (!response.ok) {
+                console.error(
+                    "Failed to re-index document in Pinecone:",
+                    await response.text()
+                );
+                return {
+                    success: false,
+                    error: "Failed to re-index in Pinecone",
+                };
+            }
+
+            return { success: true };
+        } catch (error) {
+            console.error("Error re-indexing document in Pinecone:", error);
+            return {
+                success: false,
+                error: "Network error during Pinecone re-indexing",
+            };
+        }
+    },
+});
+
+// Action to remove document from Pinecone after database deletion
+export const cleanupPineconeIndex = action({
+    args: {
+        documentId: v.string(),
+        title: v.string(),
+        content: v.optional(v.string()),
+        userId: v.optional(v.string()),
+    },
+    handler: async (ctx, args) => {
+        console.log(
+            "🧹 [CONVEX CLEANUP] Starting Pinecone cleanup for document:",
+            {
+                documentId: args.documentId,
+                title: args.title,
+                timestamp: new Date().toISOString(),
+            }
+        );
+
+        try {
+            // Get the base URL for the webhook
+            const baseUrl =
+                process.env.WEBHOOK_BASE_URL || "http://localhost:3001";
+
+            console.log(
+                "🧹 [CONVEX CLEANUP] Sending deletion request to webhook:",
+                {
+                    baseUrl,
+                    webhookUrl: `${baseUrl}/api/webhooks/document`,
+                    documentId: args.documentId,
+                }
+            );
+
+            const response = await fetch(`${baseUrl}/api/webhooks/document`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "deleted",
+                    document: {
+                        _id: args.documentId,
+                        title: args.title,
+                        content: args.content || "",
+                        userId: args.userId,
+                    },
+                }),
+            });
+
+            console.log("🧹 [CONVEX CLEANUP] Webhook response received:", {
+                status: response.status,
+                statusText: response.statusText,
+                documentId: args.documentId,
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(
+                    "❌ [CONVEX CLEANUP] Failed to remove document from Pinecone:",
+                    {
+                        status: response.status,
+                        statusText: response.statusText,
+                        error: errorText,
+                        documentId: args.documentId,
+                    }
+                );
+                return {
+                    success: false,
+                    error: "Failed to cleanup Pinecone index",
+                };
+            }
+
+            const responseData = await response.json();
+            console.log(
+                "✅ [CONVEX CLEANUP] Pinecone cleanup completed successfully:",
+                {
+                    documentId: args.documentId,
+                    responseData,
+                }
+            );
+
+            return { success: true };
+        } catch (error) {
+            console.error(
+                "❌ [CONVEX CLEANUP] Error removing document from Pinecone:",
+                {
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : "Unknown error",
+                    documentId: args.documentId,
+                    stack: error instanceof Error ? error.stack : undefined,
+                }
+            );
+            return {
+                success: false,
+                error: "Network error during Pinecone cleanup",
+            };
+        }
     },
 });
 
@@ -121,8 +302,32 @@ export const removeDocument = mutation({
     args: { id: v.id("documents") }, // Document ID to remove
     handler: async (ctx, args) => {
         const userId = await validateUser(ctx); // Validate the user
-        await fetchDocument(ctx, args.id, userId); // Fetch and validate the document
-        return await ctx.db.delete(args.id); // Delete the document
+        const document = await fetchDocument(ctx, args.id, userId); // Fetch and validate the document
+
+        console.log("🗑️ [REMOVE] Starting permanent document removal:", {
+            documentId: args.id,
+            title: document.title,
+            timestamp: new Date().toISOString(),
+        });
+
+        // Delete from database first
+        await ctx.db.delete(args.id);
+        console.log("🗑️ [REMOVE] Document deleted from database:", args.id);
+
+        // Schedule Pinecone cleanup to run after database deletion
+        console.log(
+            "🗑️ [REMOVE] Scheduling Pinecone cleanup for removed document:",
+            args.id
+        );
+        await ctx.scheduler.runAfter(0, api.documents.cleanupPineconeIndex, {
+            documentId: args.id,
+            title: document.title,
+            content: document.content,
+            userId: document.userId,
+        });
+
+        console.log("✅ [REMOVE] Document removal completed:", args.id);
+        return { success: true, documentId: args.id };
     },
 });
 

@@ -3,7 +3,6 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
     Brain,
     Search,
@@ -11,6 +10,7 @@ import {
     AlertCircle,
     Database,
     RefreshCw,
+    Trash2,
 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import Spinner from "@/components/spinner";
 import { toast } from "sonner";
 import { useDocumentIndexing } from "@/hooks/use-document-indexing";
+import { usePineconeCleanup } from "@/hooks/use-pinecone-cleanup";
 
 interface AIAnswer {
     response: string;
@@ -29,11 +30,11 @@ export function AISearch() {
     const [query, setQuery] = useState("");
     const [answer, setAnswer] = useState<AIAnswer | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [useVectorSearch, setUseVectorSearch] = useState(true);
 
     const allDocuments = useQuery(api.documents.getAllWithContent);
     const router = useRouter();
-    const { isIndexing, indexDocuments } = useDocumentIndexing();
+    const { isIndexing, bulkIndexDocuments } = useDocumentIndexing();
+    const { bulkCleanupOrphanedDocuments, isCleaningUp } = usePineconeCleanup();
     const handleSearch = async (question: string) => {
         if (!question.trim()) return;
 
@@ -44,15 +45,6 @@ export function AISearch() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     question,
-                    documents:
-                        !useVectorSearch && allDocuments
-                            ? allDocuments.map((doc) => ({
-                                  _id: doc._id,
-                                  title: doc.title,
-                                  content: doc.content,
-                              }))
-                            : undefined,
-                    useVectorSearch,
                 }),
             });
 
@@ -92,7 +84,43 @@ export function AISearch() {
             return;
         }
 
-        await indexDocuments(allDocuments);
+        console.log("Starting indexing with documents:", {
+            count: allDocuments.length,
+            firstDoc: allDocuments[0],
+        });
+
+        try {
+            await bulkIndexDocuments(allDocuments);
+            console.log("Indexing completed successfully");
+        } catch (error) {
+            console.error("Indexing error:", error);
+            toast.error(
+                "Failed to index documents. Check console for details."
+            );
+        }
+    };
+
+    const handleCleanupOrphaned = async () => {
+        if (!allDocuments) {
+            toast.error("Documents not loaded yet");
+            return;
+        }
+
+        console.log("Starting cleanup with documents:", {
+            count: allDocuments.length,
+            firstDoc: allDocuments[0],
+        });
+
+        try {
+            const validDocumentIds = allDocuments.map((doc) => doc._id);
+            await bulkCleanupOrphanedDocuments(validDocumentIds);
+            console.log("Cleanup completed successfully");
+        } catch (error) {
+            console.error("Cleanup error:", error);
+            toast.error(
+                "Failed to cleanup orphaned documents. Check console for details."
+            );
+        }
     };
 
     const getConfidenceColor = (confidence: number) => {
@@ -104,60 +132,57 @@ export function AISearch() {
     };
     return (
         <Card className="w-full max-w-3xl mx-auto">
+            {" "}
             <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                    <Brain className="w-5 h-5 text-blue-500" />
-                    AI Workspace Assistant
-                    <Badge variant="outline" className="ml-auto">
-                        {useVectorSearch ? "Vector Search" : "Keyword Search"}
-                    </Badge>
-                </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
                 {" "}
-                {/* Search Mode Controls */}
-                <div className="flex items-center justify-between gap-4 p-3 bg-muted rounded-lg">
+                <CardTitle className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        <Database className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm font-medium">
-                            Search Mode:
-                        </span>
+                        <Brain className="w-5 h-5 text-blue-500" />
+                        AI Workspace Assistant
+                    </div>
+                    <div className="flex items-center gap-2">
                         <Button
-                            variant={useVectorSearch ? "default" : "outline"}
+                            variant="outline"
                             size="sm"
-                            onClick={() => setUseVectorSearch(true)}
+                            onClick={handleCleanupOrphaned}
+                            disabled={
+                                isCleaningUp || allDocuments === undefined
+                            }
                         >
-                            Vector Search
+                            {isCleaningUp ? (
+                                <>
+                                    <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                                    Cleaning...
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 className="w-3 h-3 mr-1" />
+                                    Clean Orphaned
+                                </>
+                            )}
                         </Button>
                         <Button
-                            variant={!useVectorSearch ? "default" : "outline"}
+                            variant="outline"
                             size="sm"
-                            onClick={() => setUseVectorSearch(false)}
+                            onClick={handleIndexDocuments}
+                            disabled={isIndexing || allDocuments === undefined}
                         >
-                            Keyword Search
+                            {isIndexing ? (
+                                <>
+                                    <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                                    Indexing...
+                                </>
+                            ) : (
+                                <>
+                                    <Database className="w-3 h-3 mr-1" />
+                                    Index Documents
+                                </>
+                            )}
                         </Button>
-                    </div>{" "}
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleIndexDocuments}
-                        disabled={
-                            isIndexing || allDocuments === undefined // Only disable if undefined, not if empty array
-                        }
-                    >
-                        {isIndexing ? (
-                            <>
-                                <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
-                                Indexing...
-                            </>
-                        ) : (
-                            <>
-                                <Database className="w-3 h-3 mr-1" />
-                                Index Documents
-                            </>
-                        )}
-                    </Button>
-                </div>
+                    </div>
+                </CardTitle>
+            </CardHeader>{" "}
+            <CardContent className="space-y-4">
                 <div className="flex gap-2">
                     <Input
                         placeholder="Ask anything about your workspace..."
@@ -187,14 +212,14 @@ export function AISearch() {
                                 <AlertCircle className="w-4 h-4 text-muted-foreground" />
                                 <span className="text-sm text-muted-foreground">
                                     Confidence:
-                                </span>
-                                <Badge
-                                    className={getConfidenceColor(
+                                </span>{" "}
+                                <span
+                                    className={`px-2 py-1 rounded text-xs font-medium ${getConfidenceColor(
                                         answer.confidence
-                                    )}
+                                    )}`}
                                 >
                                     {answer.confidence}%
-                                </Badge>
+                                </span>
                             </div>
                         )}
                         {/* Answer */}
@@ -248,6 +273,40 @@ export function AISearch() {
                                 </div>
                             </div>
                         )}
+                    </div>
+                )}
+                {/* Debug Section - Only show in development */}
+                {process.env.NODE_ENV === "development" && (
+                    <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-md border">
+                        <h4 className="text-sm font-medium mb-2 text-muted-foreground">
+                            Debug Tools
+                        </h4>
+                        <div className="flex gap-2 flex-wrap">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                    window.open(
+                                        "/api/debug-pinecone?action=stats",
+                                        "_blank"
+                                    )
+                                }
+                            >
+                                Pinecone Stats
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                    window.open(
+                                        "/api/debug-pinecone?action=list",
+                                        "_blank"
+                                    )
+                                }
+                            >
+                                List Index
+                            </Button>
+                        </div>
                     </div>
                 )}
             </CardContent>

@@ -9,7 +9,6 @@ import { api } from "@/convex/_generated/api";
 import TextareaAutosize from "react-textarea-autosize";
 import { useCoverImage } from "@/hooks/use-cover-image";
 import { useSetting } from "@/hooks/use-setting";
-// import { useDocumentIndexing } from "@/hooks/use-document-indexing";
 import { debounce } from "lodash";
 
 interface ToolbarProps {
